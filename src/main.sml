@@ -43,19 +43,38 @@ fun main (radix, unsigned, plain, groupsize, endian, bendian, src, dst) =
       val dec = many1 decdig
       val hex = many1 hexdig
 
+      fun grouprev n xs =
+          let
+              fun loop nil ys = ys
+                | loop xs ys =
+                  loop (List.drop (xs, n)) (List.take (xs, n) @ ys)
+          in
+              loop xs nil
+          end
+
+      val len = fromInt o length
+
       val auto = try do strings ["0x", "0X", "\\x", "\\X"]
                       ; many1 hexdig >>> (16, 1,)
-                     end |||
-                 try do char #"0"
-                      ; many1 octdig >>> (8, 1,)
                      end |||
                  try do char #"\\"
                       ; count 3 octdig >>> (8, 1,)
                      end |||
+                 try do strings ["0b", "0B"]
+                      ; many1 bindig >>> (2, 1,)
+                     end |||
                      do ds <- many1 hexdig
-                      ; if List.exists (9 \< op<) ds
-                        then return (16, 1, ds)
-                        else return (10, 1, ds)
+                      ; dm := foldl max 0 ds
+                      (* We guess the base: binary and hexadecimal numbers must
+                         be byte aligned and the LSB comes first *)
+                      ; if dm < 2 andalso len ds mod 8 = 0 then
+                            return (2, 1, grouprev 8 ds)
+                        else if dm < 10 then
+                            return (10, 1, ds)
+                        else if len ds mod 2 = 0 then
+                            return (16, 1, grouprev 2 ds)
+                        else
+                            fail
                      end
 
       fun signed p = do oneOf "-~"
@@ -155,20 +174,10 @@ fun main (radix, unsigned, plain, groupsize, endian, bendian, src, dst) =
             fun go groupsize =
                 app (write groupsize)
 
-            (* I haven't decided if I wan't the following or not. The principle
-             * of least surprise says no -- consider:
-             *   good = [0x41, 0x42];
-             * vs
-             *   bad = [0x41, 0x42];
-             *
-             * The former would be 2 bytes and the latter 3. Opposed to both
-             * being 3 bytes.
-             *)
             val interesting = "0123456789abcdefABCDEF-~\\xX"
             val skip = many $ noneOf interesting
             fun parse ? =
-                (do n <- num
-                  ; notFollowedBy $ oneOf interesting
+                (try do n <- num
                   ; skip
                   ; ns <- parse
                   ; return (n :: ns)
@@ -182,8 +191,7 @@ fun main (radix, unsigned, plain, groupsize, endian, bendian, src, dst) =
                  end) ?
           in
             do skip
-             (* ; ns <- parse *)
-             ; ns <- many $ match num
+             ; ns <- parse
              ; groupsize := case groupsize of
                               NONE => autosize ns
                             | SOME n => n

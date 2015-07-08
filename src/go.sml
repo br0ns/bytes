@@ -1,4 +1,4 @@
-val version = "0.0.1"
+val version = "0.0.2"
 
 fun usage name =
     map println
